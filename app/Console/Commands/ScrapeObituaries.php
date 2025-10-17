@@ -27,14 +27,26 @@ class ScrapeObituaries extends Command
                 // salta ítems incompletos
                 continue;
             }
-            $created = Obituary::firstOrCreate([
-                'date' => Carbon::parse($item['date'])->toDateString(),
-                'cemetery' => $item['cemetery'],
-                'deceased_name' => $item['deceased_name'],
-            ], [
-                'park' => $item['park'] ?? null,
-            ]);
-            if ($created->wasRecentlyCreated) {
+            
+            $date = Carbon::parse($item['date'])->toDateString();
+            $cemetery = $item['cemetery'];
+            $deceasedName = $item['deceased_name'];
+            $park = $item['park'] ?? null;
+            
+            // Verificar si ya existe el registro
+            $existing = Obituary::whereDate('date', $date)
+                ->where('cemetery', $cemetery)
+                ->where('deceased_name', $deceasedName)
+                ->first();
+            
+            if (!$existing) {
+                // Solo crear si no existe
+                Obituary::create([
+                    'date' => $date,
+                    'cemetery' => $cemetery,
+                    'deceased_name' => $deceasedName,
+                    'park' => $park,
+                ]);
                 $numInserted++;
             }
         }
