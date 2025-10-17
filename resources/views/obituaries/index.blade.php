@@ -45,16 +45,44 @@
                     <button type="submit" class="btn btn-primary">Ejecutar ahora</button>
                 </form>
                 <form method="GET" action="/">
-                    <label for="date" class="muted">Fecha:</label>
-                    <select id="date" name="date" onchange="this.form.submit()">
-                        @if(empty($availableDates))
-                            <option value="{{ $selectedDate }}">{{ $selectedDate }}</option>
-                        @else
-                            @foreach($availableDates as $date)
-                                <option value="{{ $date }}" @selected($date===$selectedDate)>{{ $date }}</option>
-                            @endforeach
-                        @endif
-                    </select>
+                    <div style="display: flex; gap: 15px; align-items: center;">
+                        <div>
+                            <label for="date" class="muted">Fecha:</label>
+                            <select id="date" name="date" onchange="this.form.submit()">
+                                @if(empty($availableDates))
+                                    <option value="{{ $selectedDate }}">{{ $selectedDate }}</option>
+                                @else
+                                    @foreach($availableDates as $date)
+                                        <option value="{{ $date }}" @selected($date===$selectedDate)>
+                                            @if($date === 'all')
+                                                Mostrar todas
+                                            @else
+                                                {{ $date }}
+                                            @endif
+                                        </option>
+                                    @endforeach
+                                @endif
+                            </select>
+                        </div>
+                        <div>
+                            <label for="cemetery" class="muted">Cementerio:</label>
+                            <select id="cemetery" name="cemetery" onchange="this.form.submit()">
+                                @if(empty($availableCemeteries))
+                                    <option value="{{ $selectedCemetery }}">{{ $selectedCemetery }}</option>
+                                @else
+                                    @foreach($availableCemeteries as $cemetery)
+                                        <option value="{{ $cemetery }}" @selected($cemetery===$selectedCemetery)>
+                                            @if($cemetery === 'all')
+                                                Todos los cementerios
+                                            @else
+                                                {{ $cemetery }}
+                                            @endif
+                                        </option>
+                                    @endforeach
+                                @endif
+                            </select>
+                        </div>
+                    </div>
                 </form>
             </div>
 

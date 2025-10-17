@@ -4,117 +4,172 @@ namespace App\Console\Commands;
 
 use App\Models\Obituary;
 use Carbon\Carbon;
+// Importa la clase Command para manejar las consola de Laravel.
 use Illuminate\Console\Command;
+// Importa la clase Http para manejar las peticiones HTTP.
 use Illuminate\Support\Facades\Http;
+// Importa la clase Log para manejar los logs de Laravel.
 use Illuminate\Support\Facades\Log;
+// Importa la clase Storage para manejar el almacenamiento de Laravel.
 use Illuminate\Support\Facades\Storage;
 
+// Define la clase ScrapeObituaries que extiende de Command.
 class ScrapeObituaries extends Command
 {
+    // Define la firma del comando para ejecutar el scraping de los obituarios.
     protected $signature = 'scrape:obituaries';
+    // Define la descripción del comando para ejecutar el scraping de los obituarios.
     protected $description = 'Scrapea obituarios de cementerios y guarda en BD';
-
+    
+    // Define el método handle() que ejecuta el scraping de los obituarios.
     public function handle(): int
     {
+        // Define el array de resultados de los scraping de los obituarios.
         $allResults = [];
+        // Agrega los resultados del scraping del parque del mar a los resultados.
         $allResults = array_merge($allResults, $this->scrapeParqueDelMar());
+        // Agrega los resultados del scraping del sendero a los resultados.
         $allResults = array_merge($allResults, $this->scrapeSendero());
+        // Agrega los resultados del scraping del parque de auco a los resultados.
         $allResults = array_merge($allResults, $this->scrapeParqueDeAuco());
 
+        // Define el número de registros insertados.
         $numInserted = 0;
+        // Recorre los resultados de los scraping de los obituarios.
         foreach ($allResults as $item) {
             if (!isset($item['date'], $item['cemetery'], $item['deceased_name'])) {
-                // salta ítems incompletos
+                // Si el ítem no tiene fecha, cementerio o nombre de fallecido, salta al siguiente ítem.
                 continue;
             }
             
+            // Define la fecha, cementerio y nombre de fallecido del ítem.
             $date = Carbon::parse($item['date'])->toDateString();
+            // Define el cementerio del ítem.
             $cemetery = $item['cemetery'];
+            // Define el nombre de fallecido del ítem.
             $deceasedName = $item['deceased_name'];
             $park = $item['park'] ?? null;
             
-            // Verificar si ya existe el registro
+            // Verifica si ya existe el registro.
             $existing = Obituary::whereDate('date', $date)
                 ->where('cemetery', $cemetery)
                 ->where('deceased_name', $deceasedName)
                 ->first();
             
+            // Si el registro no existe, crea el registro.
             if (!$existing) {
-                // Solo crear si no existe
+                // Crea el registro.
                 Obituary::create([
                     'date' => $date,
                     'cemetery' => $cemetery,
                     'deceased_name' => $deceasedName,
                     'park' => $park,
                 ]);
+                // Incrementa el número de registros insertados.
                 $numInserted++;
             }
         }
 
+        // Limpiar archivos HTML temporales de la carpeta scraping
+        $this->cleanScrapingFiles();
+
+        // Muestra el número de registros insertados.
         $this->info("Scraping completado. Registros procesados: {$numInserted}");
+        // Retorna el éxito.
         return self::SUCCESS;
     }
 
+    // Define el método scrapeParqueDelMar() que scrapea los obituarios del parque del mar.
+    // Retorna un array de resultados.
     private function scrapeParqueDelMar(): array
     {
+        // Define la URL del parque del mar.
         $url = 'https://www.parquedelmar.cl/webpdm/obituario.aspx';
+        // Define el cementerio del parque del mar.
         $cemetery = 'Parque del Mar';
+        // Define el array de resultados.
         $results = [];
 
         try {
+            // Define la respuesta de la petición HTTP.
             $response = Http::get($url);
+            // Si la respuesta es fallida, registra el error.
             if ($response->failed()) {
                 Log::error("Error al acceder a $url", ['status' => $response->status()]);
                 return [];
             }
 
+            // Define el HTML de la respuesta.
             $html = $response->body();
+            // Define el DOMDocument.
             $dom = new \DOMDocument();
             libxml_use_internal_errors(true);
             $dom->loadHTML($html);
+            // Limpia los errores de libxml.
             libxml_clear_errors();
             $xpath = new \DOMXPath($dom);
-
+            
             // Extraer bloques de fecha (ej: "Con Cón, 7 octubre 2025")
             $dateNodes = $xpath->query('//div[contains(@id,"u909-4")]/p');
 
+            // Recorre los nodos de fecha.
             foreach ($dateNodes as $dateNode) {
+                // Define el texto del nodo de fecha.   
                 $dateText = trim($dateNode->textContent);
+                // Si el texto no coincide con el formato de fecha, salta al siguiente nodo.
                 if (!preg_match('/(\d{1,2})\s+([a-záéíóú]+)\s+(\d{4})/iu', $dateText, $m)) {
                     continue;
                 }
 
-                // Normalizar formato "7 octubre 2025" → "2025-10-07"
+                // Normaliza el formato de fecha "7 octubre 2025" → "2025-10-07"
                 $meses = [
                     'enero'=>'01','febrero'=>'02','marzo'=>'03','abril'=>'04','mayo'=>'05','junio'=>'06',
                     'julio'=>'07','agosto'=>'08','septiembre'=>'09','octubre'=>'10','noviembre'=>'11','diciembre'=>'12'
                 ];
+                // Define el día de la fecha.
                 $dia = str_pad($m[1], 2, '0', STR_PAD_LEFT);
+                // Define el mes de la fecha.
                 $mes = strtolower($m[2]);
+                // Define el año de la fecha.
                 $anio = $m[3];
+                // Define la fecha.
                 $fecha = "$anio-{$meses[$mes]}-$dia";
 
-                // Buscar los tres contenedores <div> inmediatamente después del bloque de fecha
+                // Busca los tres contenedores <div> inmediatamente después del bloque de fecha.
                 $group = $dateNode->parentNode->nextSibling;
                 while ($group && ($group->nodeType !== XML_ELEMENT_NODE || strpos($group->getAttribute('id'), 'pu916-10') === false)) {
                     $group = $group->nextSibling;
                 }
 
+                // Si el grupo no existe, salta al siguiente nodo.
                 if (!$group) continue;
+                // Define los nodos de horas, nombres y actividades.
 
+                // Define los nodos de horas.
                 $horas = $xpath->query('.//div[contains(@id,"u916")]/p', $group);
+                // Define los nodos de nombres.
                 $nombres = $xpath->query('.//div[contains(@id,"u918")]/p', $group);
+                // Define los nodos de actividades.
                 $actividades = $xpath->query('.//div[contains(@id,"u920")]/p', $group);
 
+                // Define el número máximo de nodos.
                 $max = min($horas->length, $nombres->length, $actividades->length);
+                // Recorre los nodos.
                 for ($i = 0; $i < $max; $i++) {
+                    // Define el nombre del fallecido.
                     $nombre = trim($nombres->item($i)->textContent);
+                    // Define la actividad del fallecido.
                     $actividad = trim($actividades->item($i)->textContent);
 
+                    // Si el nombre es vacío o la actividad no contiene "parque del mar", salta al siguiente nodo.
                     if ($nombre === '' || stripos($actividad, 'parque del mar') === false) {
                         continue;
                     }
 
+                    // Quitar prefijos "Sr." y "Sra." del nombre del fallecido
+                    $nombre = preg_replace('/^(Sr\.|Sra\.|Srta\.)\s*/i', '', $nombre);
+
+                    // Agrega el resultado al array de resultados.
                     $results[] = [
                         'date' => $fecha,
                         'cemetery' => $cemetery,
@@ -134,40 +189,146 @@ class ScrapeObituaries extends Command
     }
 
 
+    // private function scrapeSendero()
+    // {
+    //     try {
+    //         $url = 'https://sucursalvirtual-sendero-api.gux.cl/api/web/Obituario';
+    //         $response = Http::get($url);
+    
+    //         // Si la respuesta es fallida, registra el error.
+    //         if ($response->failed()) {
+    //             Log::error('Error al acceder a Sendero API', ['status' => $response->status()]);
+    //             return collect();
+    //         }
+    
+    //         // Define los datos de la respuesta.
+    //         $data = $response->json();
+
+    //         // Parques a excluir del scraping
+    //         $parquesExcluidos = [
+    //             'SAN BERNARDO',
+    //             'MAIPU',
+    //             'PADRE HURTADO',
+    //             'CONCEPCION',
+    //             'RANCAGUA',
+    //             'BALMACEDA',
+    //             'ARICA',
+    //             'IQUIQUE',
+    //             'TEMUCO',
+    //             'SAN ANTONIO'
+    //         ];
+
+    //         // Recorre los datos de la respuesta.
+    //         return collect($data)->filter(function ($item) use ($parquesExcluidos) {
+    //             // Define el parque físico.
+    //             $parque = isset($item['PARQUE_FISICO'])
+    //                 ? (explode(' - ', $item['PARQUE_FISICO'])[1] ?? $item['PARQUE_FISICO'])
+    //                 : null;
+
+    //             // Excluir si el parque está en la lista de excluidos
+    //             if ($parque && in_array(strtoupper(trim($parque)), $parquesExcluidos)) {
+    //                 return false;
+    //             }
+
+    //             return true;
+    //         })->map(function ($item) {
+    //             // Define la fecha y hora de la muerte.
+    //             $fechaHora = explode(' ', $item['FECHA_SERVICIO'] ?? '');
+    //             $fecha = $fechaHora[0] ?? null;
+    //             // Define el parque físico.
+    //             $parque = isset($item['PARQUE_FISICO'])
+    //                 ? (explode(' - ', $item['PARQUE_FISICO'])[1] ?? $item['PARQUE_FISICO'])
+    //                 : null;
+
+    //             // Agrega el resultado al array de resultados.
+    //             return [
+    //                 'date' => $fecha,
+    //                 'cemetery' => 'Parque del Sendero',
+    //                 'deceased_name' => $item['NOMBRE_FALLECIDO'] ?? null,
+    //                 'park' => $parque,
+    //             ];
+    //         })->toArray();
+    //     } catch (\Exception $e) {
+    //         // Si hay un error, registra el error.
+    //         Log::error('Error en scrapeSendero: ' . $e->getMessage());
+    //         return [];
+    //     }
+    // }
     private function scrapeSendero()
-    {
-        try {
-            $url = 'https://sucursalvirtual-sendero-api.gux.cl/api/web/Obituario';
-            $response = Http::get($url);
-    
-            if ($response->failed()) {
-                Log::error('Error al acceder a Sendero API', ['status' => $response->status()]);
-                return collect();
-            }
-    
-            $data = $response->json();
+{
+    try {
+        $url = 'https://sucursalvirtual-sendero-api.gux.cl/api/web/Obituario';
+        $response = Http::get($url);
 
-            return collect($data)->map(function ($item) {
-                $fechaHora = explode(' ', $item['FECHA_SERVICIO'] ?? '');
-                $fecha = $fechaHora[0] ?? null;
-                $parque = isset($item['PARQUE_FISICO'])
-                    ? (explode(' - ', $item['PARQUE_FISICO'])[1] ?? $item['PARQUE_FISICO'])
-                    : null;
-
-                return [
-                    'date' => $fecha,
-                    'cemetery' => 'Parque del Sendero',
-                    'deceased_name' => $item['NOMBRE_FALLECIDO'] ?? null,
-                    'park' => $parque,
-                ];
-            })->toArray();
-        } catch (\Exception $e) {
-            Log::error('Error en scrapeSendero: ' . $e->getMessage());
-            return [];
+        // Si la respuesta es fallida, registra el error.
+        if ($response->failed()) {
+            Log::error('Error al acceder a Sendero API', ['status' => $response->status()]);
+            return collect();
         }
-    }
 
-    private function scrapeParqueDeAuco()
+        // Define los datos de la respuesta.
+        $data = $response->json();
+
+        // Parques a excluir del scraping
+        $parquesExcluidos = [
+            'SAN BERNARDO',
+            'MAIPU',
+            'PADRE HURTADO',
+            'CONCEPCION',
+            'RANCAGUA',
+            'BALMACEDA',
+            'ARICA',
+            'IQUIQUE',
+            'TEMUCO',
+            'SAN ANTONIO'
+        ];
+
+        // Recorre los datos de la respuesta.
+        return collect($data)->filter(function ($item) use ($parquesExcluidos) {
+            // Define el parque físico.
+            $parque = isset($item['PARQUE_FISICO'])
+                ? (explode(' - ', $item['PARQUE_FISICO'])[1] ?? $item['PARQUE_FISICO'])
+                : null;
+
+            // Excluir si el parque está en la lista de excluidos
+            if ($parque && in_array(strtoupper(trim($parque)), $parquesExcluidos)) {
+                return false;
+            }
+
+            return true;
+        })->map(function ($item) {
+            // Define la fecha y hora de la muerte.
+            $fechaHora = explode(' ', $item['FECHA_SERVICIO'] ?? '');
+            $fecha = $fechaHora[0] ?? null;
+            // Define el parque físico.
+            $parque = isset($item['PARQUE_FISICO'])
+                ? (explode(' - ', $item['PARQUE_FISICO'])[1] ?? $item['PARQUE_FISICO'])
+                : null;
+
+            // Eliminar " Q.E.P.D" del nombre del fallecido
+            $deceasedName = $item['NOMBRE_FALLECIDO'] ?? null;
+            if ($deceasedName) {
+                $deceasedName = str_replace(' Q.E.P.D', '', $deceasedName);
+            }
+
+            // Agrega el resultado al array de resultados.
+            return [
+                'date' => $fecha,
+                'cemetery' => 'Parque del Sendero',
+                'deceased_name' => $deceasedName,
+                'park' => $parque,
+            ];
+        })->toArray();
+    } catch (\Exception $e) {
+        // Si hay un error, registra el error.
+        Log::error('Error en scrapeSendero: ' . $e->getMessage());
+        return [];
+    }
+}
+
+    // Define el método scrapeParqueDeAuco() que scrapea los obituarios del parque de auco.
+    // Retorna un array de resultados.
+    private function scrapeParqueDeAuco(): array
     {
         try {
             $url = 'https://parquedeauco.cl/obituario/';
@@ -207,22 +368,29 @@ class ScrapeObituaries extends Command
                     'septiembre' => '09', 'octubre' => '10', 'noviembre' => '11', 'diciembre' => '12',
                 ];
     
+                // Define la fecha.
                 $fecha = null;
+                // Si la fecha coincide con el formato de fecha, define la fecha.
                 if (preg_match('/([a-záéíóú]+)\s+(\d{1,2}),\s*(\d{4})/iu', $fechaTexto, $m)) {
+                    // Define el mes de la fecha.
                     $mes = strtolower($m[1]);
+                    // Si el mes existe, define la fecha.
                     if (isset($meses[$mes])) {
+                        // Define el día de la fecha.
                         $dia = str_pad($m[2], 2, '0', STR_PAD_LEFT);
+                        // Define el año de la fecha.
                         $anio = $m[3];
                         $fecha = "$anio-{$meses[$mes]}-$dia";
                     }
                 }
     
-                // Si no logra parsear, ignora la fila
+                // Si no logra parsear la fecha, ignora la fila.
                 if (!$fecha) {
                     Log::warning('No se pudo parsear la fecha en Parque de Auco', ['valor' => $fechaTexto]);
                     continue;
                 }
     
+                // Agrega el resultado al array de resultados.
                 $results[] = [
                     'date' => $fecha,
                     'cemetery' => 'Parque de Auco',
@@ -376,6 +544,35 @@ class ScrapeObituaries extends Command
             }
         }
         return null;
+    }
+
+    /**
+     * Limpia los archivos HTML temporales de la carpeta scraping
+     */
+    private function cleanScrapingFiles(): void
+    {
+        try {
+            $scrapingDir = 'scraping';
+            
+            // Verificar si la carpeta existe
+            if (Storage::disk('local')->exists($scrapingDir)) {
+                // Obtener todos los archivos de la carpeta scraping
+                $files = Storage::disk('local')->files($scrapingDir);
+                
+                // Eliminar cada archivo
+                foreach ($files as $file) {
+                    Storage::disk('local')->delete($file);
+                }
+                
+                $this->info("Archivos temporales eliminados: " . count($files) . " archivos");
+                Log::info('Archivos de scraping eliminados', ['archivos' => count($files)]);
+            } else {
+                $this->info("Carpeta de scraping no existe, no hay archivos que eliminar");
+            }
+        } catch (\Exception $e) {
+            $this->error("Error al limpiar archivos de scraping: " . $e->getMessage());
+            Log::error('Error al limpiar archivos de scraping: ' . $e->getMessage());
+        }
     }
 }
 

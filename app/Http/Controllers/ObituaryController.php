@@ -23,6 +23,13 @@ class ObituaryController extends Controller
             $selectedDate = Carbon::today()->toDateString();
         }
 
+        // Obtener el cementerio seleccionado desde la URL
+        $selectedCemetery = $request->query('cemetery');
+        // Si no hay cementerio seleccionado, usar "all"
+        if (!$selectedCemetery) {
+            $selectedCemetery = 'all';
+        }
+
         // Obtener las fechas disponibles de los obituarios
         $availableDates = Obituary::query()
             ->selectRaw('date')
@@ -32,10 +39,34 @@ class ObituaryController extends Controller
             ->map(fn($d) => Carbon::parse($d)->toDateString())
             ->toArray();
 
-        // Filtrar obituarios por la fecha seleccionada
-        $obituaries = Obituary::query()
-            ->whereDate('date', $selectedDate)
-            ->orderByDesc('date')
+        // Agregar opción "Mostrar todas" al inicio del array
+        array_unshift($availableDates, 'all');
+
+        // Obtener los cementerios disponibles
+        $availableCemeteries = Obituary::query()
+            ->selectRaw('cemetery')
+            ->distinct()
+            ->orderBy('cemetery')
+            ->pluck('cemetery')
+            ->toArray();
+
+        // Agregar opción "Todos los cementerios" al inicio del array
+        array_unshift($availableCemeteries, 'all');
+
+        // Filtrar obituarios según la selección
+        $obituaries = Obituary::query();
+        
+        // Si no se seleccionó "Mostrar todas", filtrar por fecha
+        if ($selectedDate !== 'all') {
+            $obituaries->whereDate('date', $selectedDate);
+        }
+        
+        // Si no se seleccionó "Todos los cementerios", filtrar por cementerio
+        if ($selectedCemetery !== 'all') {
+            $obituaries->where('cemetery', $selectedCemetery);
+        }
+        
+        $obituaries = $obituaries->orderByDesc('date')
             ->orderBy('cemetery')
             ->orderBy('deceased_name')
             ->get();
@@ -43,6 +74,8 @@ class ObituaryController extends Controller
         return view('obituaries.index', [
             'selectedDate' => $selectedDate,
             'availableDates' => $availableDates,
+            'selectedCemetery' => $selectedCemetery,
+            'availableCemeteries' => $availableCemeteries,
             'obituaries' => $obituaries,
         ]);
     }
